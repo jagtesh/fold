@@ -1,5 +1,8 @@
 #![allow(clippy::doc_lazy_continuation)]
 
+// Public until the UI integration lands so the not-yet-consumed config layer
+// isn't flagged as dead code.
+pub mod acp;
 mod ai;
 mod alloc;
 mod antivirus;

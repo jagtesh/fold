@@ -74,6 +74,12 @@ pub fn warp_home_mcp_config_file_path() -> Option<PathBuf> {
     warp_home_config_dir().map(|warp_config_dir| warp_config_dir.join(".mcp.json"))
 }
 
+/// Returns the path of the user's ACP agents config file, which defines the
+/// external ACP agents (command, args, env) available in the agent picker.
+pub fn warp_home_acp_agents_config_file_path() -> Option<PathBuf> {
+    warp_home_config_dir().map(|warp_config_dir| warp_config_dir.join("agents.json"))
+}
+
 /// Returns the macOS config directory name for the current channel.
 ///
 /// Stable uses `.warp`, while other channels include a channel suffix
