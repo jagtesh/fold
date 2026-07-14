@@ -6,4 +6,5 @@
 
 pub mod agent_manager;
 pub mod agents_config;
+pub mod conversation;
 pub mod delegate;
