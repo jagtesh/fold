@@ -2117,6 +2117,7 @@ pub(crate) fn initialize_app(
     ctx.add_singleton_model(FileBasedMCPManager::new);
 
     ctx.add_singleton_model(acp::agent_manager::AcpAgentManager::new);
+    ctx.add_singleton_model(|_ctx| acp::registry::AcpConversationRegistry::default());
 
     // TemplatableMCPServerManager must be registered after UpdateManager and MCPServerManager so it can migrate legacy MCPs on start up
     // It should also be registered after FileBasedMCPManager so it can receive file-based server updates.

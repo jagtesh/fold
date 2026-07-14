@@ -351,6 +351,22 @@ impl ResponseStream {
         cancellation_rx: oneshot::Receiver<()>,
         ctx: &mut ModelContext<Self>,
     ) {
+        // ACP-backed conversations bypass the multi-agent backend: the
+        // response stream is synthesized from the agent's session updates.
+        let cancellation_rx =
+            match crate::acp::registry::try_acp_response_stream(&params, cancellation_rx, ctx) {
+                Ok(stream) => {
+                    let _ = ctx.spawn(
+                        async move { Ok::<_, ConvertToAPITypeError>(stream) },
+                        move |me, stream, ctx| {
+                            me.handle_response_stream_result(request_id, stream, ctx);
+                        },
+                    );
+                    return;
+                }
+                Err(cancellation_rx) => cancellation_rx,
+            };
+
         let server_api = ServerApiProvider::as_ref(ctx).get();
         let _ = ctx.spawn(
             async move { generate_multi_agent_output(server_api, params, cancellation_rx).await },
