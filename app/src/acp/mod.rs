@@ -4,4 +4,5 @@
 //! configuration, connection lifecycle, and the bridge onto Warp's agent
 //! conversation UI.
 
+pub mod agent_manager;
 pub mod agents_config;
