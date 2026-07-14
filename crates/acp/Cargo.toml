@@ -1,0 +1,25 @@
+[package]
+name = "acp"
+version = "0.1.0"
+edition = "2021"
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+agent-client-protocol-schema.workspace = true
+anyhow.workspace = true
+async-channel.workspace = true
+async-process.workspace = true
+async-trait.workspace = true
+command.workspace = true
+futures.workspace = true
+jsonrpc.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+simple_logger.workspace = true
+warp_errors.workspace = true
+warpui_core.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true }

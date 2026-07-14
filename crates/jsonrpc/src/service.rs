@@ -76,12 +76,21 @@ type Subscription = async_channel::Sender<ServerNotificationEvent>;
 
 type ServerRequestHandler = Arc<dyn Fn(String, Value, RequestId) -> Result<()> + Send + Sync>;
 
+/// A handler that owns responding to server -> client requests. Unlike
+/// [`ServerRequestHandler`], no automatic response is written on its behalf:
+/// the handler must eventually call [`JsonRpcService::respond`] or
+/// [`JsonRpcService::respond_with_error`] with the request's ID (possibly
+/// long after returning, e.g. once a user answers a permission prompt).
+/// Returning an error causes an internal-error response to be written.
+type ServerRequestResponder = Arc<dyn Fn(String, Value, RequestId) -> Result<()> + Send + Sync>;
+
 pub struct JsonRpcService {
     transport: Arc<dyn Transport>,
     request_id_counter: AtomicI32,
     pending_requests: Arc<AsyncMutex<HashMap<RequestId, oneshot::Sender<Result<Value>>>>>,
     notification_subscriptions: Arc<AsyncMutex<HashMap<String, Subscription>>>,
     server_request_handler: Arc<Mutex<Option<ServerRequestHandler>>>,
+    server_request_responder: Arc<Mutex<Option<ServerRequestResponder>>>,
     executor: Arc<Background>,
 }
 
@@ -97,11 +106,13 @@ impl JsonRpcService {
         let pending_requests = Arc::new(AsyncMutex::new(HashMap::new()));
         let notification_subscriptions = Arc::new(AsyncMutex::new(HashMap::new()));
         let server_request_handler = Arc::new(Mutex::new(None));
+        let server_request_responder = Arc::new(Mutex::new(None));
 
         let transport_clone = transport.clone();
         let pending_requests_clone = pending_requests.clone();
         let notification_subscriptions_clone = notification_subscriptions.clone();
         let server_request_handler_clone = server_request_handler.clone();
+        let server_request_responder_clone = server_request_responder.clone();
 
         executor
             .spawn(async move {
@@ -110,6 +121,7 @@ impl JsonRpcService {
                     pending_requests_clone,
                     notification_subscriptions_clone,
                     server_request_handler_clone,
+                    server_request_responder_clone,
                     request_error_code,
                 )
                 .await
@@ -125,6 +137,7 @@ impl JsonRpcService {
             pending_requests,
             notification_subscriptions,
             server_request_handler,
+            server_request_responder,
             executor,
         }
     }
@@ -141,12 +154,67 @@ impl JsonRpcService {
         *guard = Some(Arc::new(handler));
     }
 
+    /// Installs a responder that owns server -> client requests. When set, no
+    /// automatic response is written for incoming requests; the responder must
+    /// eventually call [`Self::respond`] or [`Self::respond_with_error`] with
+    /// the request's ID. This is required by protocols (e.g. ACP) where the
+    /// server issues requests whose results depend on client-side work, such
+    /// as permission prompts or file reads. Takes precedence over
+    /// [`Self::set_server_request_handler`].
+    pub fn set_server_request_responder(
+        &self,
+        responder: impl Fn(String, Value, RequestId) -> Result<()> + Send + Sync + 'static,
+    ) {
+        let mut guard = self
+            .server_request_responder
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *guard = Some(Arc::new(responder));
+    }
+
+    /// Writes a successful response for a server -> client request previously
+    /// delivered to the responder installed via
+    /// [`Self::set_server_request_responder`].
+    pub async fn respond(&self, request_id: RequestId, result: Value) -> Result<()> {
+        let response = serde_json::json!({
+            "jsonrpc": JSON_RPC_VERSION,
+            "id": request_id,
+            "result": result,
+        });
+        self.transport
+            .write(&serde_json::to_string(&response)?)
+            .await
+    }
+
+    /// Writes an error response for a server -> client request previously
+    /// delivered to the responder installed via
+    /// [`Self::set_server_request_responder`].
+    pub async fn respond_with_error(
+        &self,
+        request_id: RequestId,
+        code: i64,
+        message: &str,
+    ) -> Result<()> {
+        let response = serde_json::json!({
+            "jsonrpc": JSON_RPC_VERSION,
+            "id": request_id,
+            "error": {
+                "code": code,
+                "message": message,
+            },
+        });
+        self.transport
+            .write(&serde_json::to_string(&response)?)
+            .await
+    }
+
     /// Background loop that reads complete messages from the transport and dispatches them.
     async fn read_loop(
         transport: Arc<dyn Transport>,
         pending_requests: Arc<AsyncMutex<HashMap<RequestId, oneshot::Sender<Result<Value>>>>>,
         notification_subscriptions: Arc<AsyncMutex<HashMap<String, Subscription>>>,
         server_request_handler: Arc<Mutex<Option<ServerRequestHandler>>>,
+        server_request_responder: Arc<Mutex<Option<ServerRequestResponder>>>,
         request_error_code: i64,
     ) -> Result<()> {
         loop {
@@ -163,6 +231,7 @@ impl JsonRpcService {
                 &pending_requests,
                 &notification_subscriptions,
                 &server_request_handler,
+                &server_request_responder,
                 request_error_code,
             )
             .await
@@ -181,9 +250,35 @@ impl JsonRpcService {
         pending_requests: &AsyncMutex<HashMap<RequestId, oneshot::Sender<Result<Value>>>>,
         notification_subscriptions: &AsyncMutex<HashMap<String, Subscription>>,
         server_request_handler: &Mutex<Option<ServerRequestHandler>>,
+        server_request_responder: &Mutex<Option<ServerRequestResponder>>,
         request_error_code: i64,
     ) -> Result<()> {
         if let Ok(request) = serde_json::from_str::<AnyRequest>(message) {
+            // When a responder is installed, it owns producing the response.
+            let responder = server_request_responder
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            if let Some(responder) = responder {
+                let params = match request.params {
+                    Some(params) => serde_json::from_str(params.get()).unwrap_or(Value::Null),
+                    None => Value::Null,
+                };
+                if let Err(e) = responder(request.method.to_string(), params, request.id) {
+                    log::warn!("Server request responder error for {}: {e}", request.method);
+                    let response = serde_json::json!({
+                        "jsonrpc": JSON_RPC_VERSION,
+                        "id": request.id,
+                        "error": {
+                            "code": request_error_code,
+                            "message": format!("Internal error handling {}", request.method),
+                        }
+                    });
+                    transport.write(&serde_json::to_string(&response)?).await?;
+                }
+                return Ok(());
+            }
+
             let should_ack = matches!(
                 request.method,
                 "window/workDoneProgress/create"

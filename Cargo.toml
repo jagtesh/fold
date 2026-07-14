@@ -29,6 +29,7 @@ publish = false
 
 [workspace.dependencies]
 # Local workspace crates. This lets us reference them in other crates without specifying a path.
+acp = { path = "crates/acp" }
 ai = { path = "crates/ai" }
 app-installation-detection = { path = "crates/app-installation-detection" }
 asset_cache = { path = "crates/asset_cache" }
@@ -107,6 +108,7 @@ websocket = { path = "crates/websocket" }
 
 # Workspace-level dependencies used by multiple crates. Prefer adding dependencies
 # here to copying-and-pasting versions.
+agent-client-protocol-schema = "1.4.0"
 axum = "0.8.4"
 anyhow = "1.0"
 arboard = { version = "3.6.1", default-features = false }
