@@ -15102,6 +15102,7 @@ dependencies = [
 name = "warp"
 version = "0.1.0"
 dependencies = [
+ "acp",
  "addr",
  "aha-reqwest-eventsource",
  "aho-corasick",

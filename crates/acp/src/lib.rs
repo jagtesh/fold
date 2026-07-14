@@ -98,7 +98,6 @@ pub trait AcpClientDelegate: Send + Sync + 'static {
 pub struct AcpAgentConnection {
     service: Arc<JsonRpcService>,
     session_updates: async_channel::Receiver<schema::SessionNotification>,
-    executor: Arc<Background>,
 }
 
 impl AcpAgentConnection {
@@ -154,7 +153,6 @@ impl AcpAgentConnection {
         Ok(Self {
             service,
             session_updates: typed_rx,
-            executor,
         })
     }
 
