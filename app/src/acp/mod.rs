@@ -9,3 +9,4 @@ pub mod agents_config;
 pub mod conversation;
 pub mod delegate;
 pub mod proto_shim;
+pub mod response_stream_driver;

@@ -97,7 +97,7 @@ pub trait AcpClientDelegate: Send + Sync + 'static {
 /// Dropping the connection does not kill the agent; call [`Self::shutdown`].
 pub struct AcpAgentConnection {
     service: Arc<JsonRpcService>,
-    session_updates: async_channel::Receiver<schema::SessionNotification>,
+    session_updates: async_channel::Receiver<ServerNotificationEvent>,
 }
 
 impl AcpAgentConnection {
@@ -120,46 +120,45 @@ impl AcpAgentConnection {
 
         Self::install_delegate(&service, delegate, &executor);
 
-        // Bridge raw session/update notifications into a typed channel.
+        // Subscribe to session/update notifications. The read loop pushes
+        // into this channel synchronously (before it resolves any pending
+        // request), so a consumer that drains the channel after a prompt
+        // resolves is guaranteed to see every update the agent sent first.
+        // Parsing happens lazily at consumption time (see
+        // [`Self::session_updates`]) to preserve that ordering — a spawned
+        // parsing task would race turn completion.
         let (raw_tx, raw_rx) = async_channel::bounded(SESSION_UPDATE_CHANNEL_CAPACITY);
-        let (typed_tx, typed_rx) = async_channel::bounded(SESSION_UPDATE_CHANNEL_CAPACITY);
         let service_for_subscribe = service.clone();
-        let executor_clone = executor.clone();
         executor
             .spawn(async move {
                 service_for_subscribe
                     .subscribe(CLIENT_METHOD_NAMES.session_update.to_string(), raw_tx)
                     .await;
-                executor_clone
-                    .spawn(async move {
-                        while let Ok(event) = raw_rx.recv().await {
-                            let ServerNotificationEvent { params, .. } = event;
-                            match serde_json::from_value::<schema::SessionNotification>(params) {
-                                Ok(notification) => {
-                                    if typed_tx.send(notification).await.is_err() {
-                                        break;
-                                    }
-                                }
-                                Err(e) => {
-                                    log::warn!("ACP: Failed to parse session/update: {e}");
-                                }
-                            }
-                        }
-                    })
-                    .detach();
             })
             .detach();
 
         Ok(Self {
             service,
-            session_updates: typed_rx,
+            session_updates: raw_rx,
         })
     }
 
     /// Returns the stream of `session/update` notifications for all sessions
-    /// on this connection.
-    pub fn session_updates(&self) -> async_channel::Receiver<schema::SessionNotification> {
-        self.session_updates.clone()
+    /// on this connection. Malformed notifications are logged and skipped.
+    pub fn session_updates(
+        &self,
+    ) -> futures::stream::BoxStream<'static, schema::SessionNotification> {
+        use futures::StreamExt as _;
+        Box::pin(self.session_updates.clone().filter_map(|event| async move {
+            let ServerNotificationEvent { params, .. } = event;
+            match serde_json::from_value::<schema::SessionNotification>(params) {
+                Ok(notification) => Some(notification),
+                Err(e) => {
+                    log::warn!("ACP: Failed to parse session/update: {e}");
+                    None
+                }
+            }
+        }))
     }
 
     /// Performs the `initialize` handshake.
