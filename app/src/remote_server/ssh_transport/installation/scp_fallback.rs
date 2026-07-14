@@ -123,7 +123,38 @@ async fn is_valid_cached_tarball(path: &Path) -> bool {
 ///
 /// Reuses an existing cached tarball when available; otherwise downloads the
 /// tarball into the cache and returns the newly cached path.
+/// Environment variable naming a local directory of pre-built remote-server
+/// tarballs (`remote-server-<os>-<arch>.tar.gz`). Used instead of downloading
+/// from the CDN — required on cloud-disabled builds, optional elsewhere.
+const REMOTE_SERVER_TARBALL_DIR_ENV_VAR: &str = "WARP_REMOTE_SERVER_TARBALL_DIR";
+
 async fn cached_remote_server_tarball(platform: &RemotePlatform) -> anyhow::Result<PathBuf> {
+    if let Ok(dir) = std::env::var(REMOTE_SERVER_TARBALL_DIR_ENV_VAR) {
+        let local_path = Path::new(&dir).join(format!(
+            "remote-server-{}-{}.tar.gz",
+            platform.os.as_str(),
+            platform.arch.as_str()
+        ));
+        if is_valid_cached_tarball(&local_path).await {
+            log::info!(
+                "Using local remote-server tarball at {}",
+                local_path.display()
+            );
+            return Ok(local_path);
+        }
+        anyhow::bail!(
+            "{REMOTE_SERVER_TARBALL_DIR_ENV_VAR} is set but no valid tarball exists at {}",
+            local_path.display()
+        );
+    }
+    if warp_core::channel::ChannelState::cloud_disabled() {
+        anyhow::bail!(
+            "no remote-server tarball available: this build has cloud downloads disabled; \
+             set {REMOTE_SERVER_TARBALL_DIR_ENV_VAR} to a directory containing \
+             remote-server-<os>-<arch>.tar.gz artifacts"
+        );
+    }
+
     let cache_path = remote_server_tarball_cache_path(platform);
     if is_valid_cached_tarball(&cache_path).await {
         log::info!(

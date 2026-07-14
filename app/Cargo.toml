@@ -23,6 +23,11 @@ path = "src/bin/oss.rs"
 test = false
 
 [[bin]]
+name = "fold"
+path = "src/bin/fold.rs"
+test = false
+
+[[bin]]
 name = "warp"
 path = "src/bin/local.rs"
 test = false

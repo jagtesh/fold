@@ -16,6 +16,8 @@ pub fn init_feature_flags() {
 fn enabled_features() -> HashSet<FeatureFlag> {
     // Enable features overridden for the given channel.
     let mut flags = ChannelState::additional_features();
+    // Features force-disabled for the channel, subtracted at the end.
+    let removed_flags = ChannelState::removed_features();
 
     // Enable flags for release builds, if appropriate.
     if ChannelState::is_release_bundle() {
@@ -509,5 +511,6 @@ fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::PromptCacheExpiryWarning,
     ]);
 
+    flags.retain(|flag| !removed_flags.contains(flag));
     flags
 }

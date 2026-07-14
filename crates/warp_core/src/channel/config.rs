@@ -63,7 +63,25 @@ impl WarpServerConfig {
             iap_config: None,
         }
     }
+
+    /// A configuration for builds that do not talk to any Warp-hosted backend.
+    ///
+    /// Every URL points at an RFC 2606 `.invalid` sentinel so that any missed
+    /// call site fails fast at DNS resolution instead of reaching a real server.
+    /// See [`super::state::ChannelState::cloud_disabled`].
+    pub fn disabled() -> Self {
+        Self {
+            server_root_url: CLOUD_DISABLED_SENTINEL_URL.into(),
+            rtc_server_url: "wss://cloud-disabled.invalid/graphql/v2".into(),
+            session_sharing_server_url: None,
+            firebase_auth_api_key: "".into(),
+            iap_config: None,
+        }
+    }
 }
+
+/// Sentinel `server_root_url` for builds with the cloud backend disabled.
+pub const CLOUD_DISABLED_SENTINEL_URL: &str = "https://cloud-disabled.invalid";
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct OzConfig {
@@ -80,6 +98,14 @@ impl OzConfig {
     pub fn production() -> Self {
         Self {
             oz_root_url: "https://oz.warp.dev".into(),
+            workload_audience_url: None,
+        }
+    }
+
+    /// Companion to [`WarpServerConfig::disabled`]: no Oz backend.
+    pub fn disabled() -> Self {
+        Self {
+            oz_root_url: CLOUD_DISABLED_SENTINEL_URL.into(),
             workload_audience_url: None,
         }
     }

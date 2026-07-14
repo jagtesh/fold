@@ -31,6 +31,11 @@ pub struct ChannelState {
     /// The set of additional features to enable (on top of default-enabled ones).
     additional_features: HashSet<FeatureFlag>,
 
+    /// The set of features to force off, subtracted after all default-enabled
+    /// and additional features are collected. Used by builds that disable the
+    /// cloud backend (see [`Self::cloud_disabled`]).
+    removed_features: HashSet<FeatureFlag>,
+
     config: ChannelConfig,
 }
 
@@ -41,6 +46,7 @@ impl ChannelState {
         Self {
             channel,
             additional_features: Default::default(),
+            removed_features: Default::default(),
             config: ChannelConfig {
                 app_id,
                 logfile_name: "".into(),
@@ -68,12 +74,18 @@ impl ChannelState {
         Self {
             channel,
             additional_features: Default::default(),
+            removed_features: Default::default(),
             config,
         }
     }
 
     pub fn with_additional_features(mut self, overrides: &[FeatureFlag]) -> Self {
         self.additional_features.extend(overrides);
+        self
+    }
+
+    pub fn with_removed_features(mut self, removals: &[FeatureFlag]) -> Self {
+        self.removed_features.extend(removals);
         self
     }
 
@@ -168,6 +180,23 @@ impl ChannelState {
             .iter()
             .cloned()
             .collect()
+    }
+
+    pub fn removed_features() -> HashSet<FeatureFlag> {
+        CHANNEL_STATE
+            .lock()
+            .removed_features
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Returns true when this build is configured without any Warp-hosted
+    /// backend (see [`WarpServerConfig::disabled`]). Call sites that would
+    /// otherwise fetch from or retry against Warp's servers should no-op when
+    /// this is set.
+    pub fn cloud_disabled() -> bool {
+        Self::server_root_url() == crate::channel::config::CLOUD_DISABLED_SENTINEL_URL
     }
 
     pub fn debug_str() -> String {

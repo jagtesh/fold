@@ -13,6 +13,25 @@ use remote_server::transport::{Error, InstallOutcome, InstallSource};
 pub(super) async fn install_binary(socket_path: &Path) -> InstallOutcome {
     let binary_path = remote_server::setup::remote_server_binary();
     log::info!("Installing remote server binary to {binary_path}");
+
+    // Cloud-disabled builds have no CDN for the remote host to download from,
+    // so upload the client-side binary over SCP directly.
+    if warp_core::channel::ChannelState::cloud_disabled() {
+        log::info!("Cloud disabled; installing remote server binary via SCP upload");
+        let mut outcome = match scp_fallback::install(socket_path).await {
+            Ok(()) => InstallOutcome {
+                source: Some(InstallSource::Client),
+                result: Ok(()),
+            },
+            Err(e) => InstallOutcome {
+                source: Some(InstallSource::Client),
+                result: Err(e),
+            },
+        };
+        verify_install(socket_path, &binary_path, &mut outcome).await;
+        return outcome;
+    }
+
     let mut outcome = match install_on_server(socket_path).await {
         Ok(()) => InstallOutcome {
             source: Some(InstallSource::Server),
@@ -40,9 +59,14 @@ pub(super) async fn install_binary(socket_path: &Path) -> InstallOutcome {
         }
     };
 
-    // Post-install verification: confirm the binary actually landed at the
-    // expected path and is functional. This catches silent install failures
-    // that would otherwise surface as a cryptic IPC handshake error.
+    verify_install(socket_path, &binary_path, &mut outcome).await;
+    outcome
+}
+
+/// Post-install verification: confirm the binary actually landed at the
+/// expected path and is functional. This catches silent install failures
+/// that would otherwise surface as a cryptic IPC handshake error.
+async fn verify_install(socket_path: &Path, binary_path: &str, outcome: &mut InstallOutcome) {
     if outcome.result.is_ok() {
         log::info!("Running post-install verification for {binary_path}");
         let check_cmd = remote_server::setup::binary_check_command();
@@ -69,8 +93,6 @@ pub(super) async fn install_binary(socket_path: &Path) -> InstallOutcome {
             }
         }
     }
-
-    outcome
 }
 
 /// Runs the install script on the remote host to download and install the
